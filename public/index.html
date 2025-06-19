@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>База данных средств измерений</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+   
+</head>
+<body>
+    <div class="container">
+        <h1>База данных средств измерений</h1>
+        
+        <div class="card glow">
+            <h2>Фильтры и сортировка</h2>
+            
+            <div class="filter-section">
+                <div class="filter-row">
+                    <label for="tableSelect">Выберите таблицу:</label>
+                    <select id="tableSelect">
+                        <option value="">-- Загрузка таблиц --</option>
+                    </select>
+                </div>
+                
+                <div class="filter-row">
+                    <label for="organization-filter">Организация-поверитель:</label>
+                    <select id="organization-filter">
+                        <option value="all">Все организации</option>
+                        <option value="АО &quot;ПТП &quot;МЕДТЕХНИКА&quot;">АО "ПТП "МЕДТЕХНИКА"</option>
+                        <option value="АО &quot;СВЕТЛАНА-ЭЛЕКТРОНПРИБОР&quot;">АО "СВЕТЛАНА-ЭЛЕКТРОНПРИБОР"</option>
+                        <option value="АО &quot;Н4 БТРЗ&quot;">АО "Н4 БТРЗ"</option>
+                    </select>
+                </div>
+                
+                <div class="filter-row">
+                    <label for="sort-field">Сортировать по:</label>
+                    <select id="sort-field">
+                        <option value="">-- Не сортировать --</option>
+                        <option value="Номер свидетельства/извещения">Номер свидетельства</option>
+                        <option value="Дата поверки">Дата поверки</option>
+                        <option value="Действительна до">Действительна до</option>
+                    </select>
+                    
+                    <select id="sort-direction">
+                        <option value="ASC">По возрастанию</option>
+                        <option value="DESC">По убыванию</option>
+                    </select>
+                </div>
+                
+                <div class="filter-row">
+                    <button id="apply-filters">
+                        <span class="loader" id="apply-loader" style="display: none;"></span>
+                        Применить фильтры
+                    </button>
+                    <button id="reset-filters">Сбросить фильтры</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="status" id="status">Готово к работе. Выберите таблицу и настройте фильтры.</div>
+        
+        <div class="card">
+            <div id="table-container"></div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+
+    <script>
+        
+        const statusEl = document.getElementById('status');
+        const tableSelect = document.getElementById('tableSelect');
+        const organizationFilter = document.getElementById('organization-filter');
+        const sortField = document.getElementById('sort-field');
+        const sortDirection = document.getElementById('sort-direction');
+        const applyFiltersBtn = document.getElementById('apply-filters');
+        const resetFiltersBtn = document.getElementById('reset-filters');
+        const tableContainer = document.getElementById('table-container');
+        const paginationEl = document.getElementById('pagination');
+        const applyLoader = document.getElementById('apply-loader');
+
+       
+        let currentTable = '';
+        let currentPage = 1;
+        let currentFilters = {
+            organization: 'all',
+            sortField: '',
+            sortDirection: 'ASC'
+        };
+
+       
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadTablesList();
+            
+            applyFiltersBtn.addEventListener('click', applyFilters);
+            resetFiltersBtn.addEventListener('click', resetFilters);
+            tableSelect.addEventListener('change', onTableSelectChange);
+        });
+
+       
+        async function loadTablesList() {
+            setStatus('Загрузка списка таблиц...', 'loading');
+            
+            try {
+                const response = await fetch('/api/tables');
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Ошибка сервера');
+                }
+                
+                const tables = await response.json();
+                
+                tableSelect.innerHTML = '<option value="">-- Выберите таблицу --</option>';
+                tables.forEach(table => {
+                    const option = document.createElement('option');
+                    option.value = table;
+                    option.textContent = table;
+                    tableSelect.appendChild(option);
+                });
+                
+                setStatus(`Загружено ${tables.length} таблиц`, 'success');
+            } catch (err) {
+                setStatus(`Ошибка: ${err.message}`, 'error');
+                console.error('Ошибка загрузки таблиц:', err);
+            }
+        }
+
+        
+        function onTableSelectChange() {
+            currentTable = tableSelect.value;
+            if (currentTable) {
+                applyFilters();
+            }
+        }
+
+        
+        async function applyFilters() {
+            if (!currentTable) {
+                setStatus('Пожалуйста, выберите таблицу', 'error');
+                return;
+            }
+            
+            applyLoader.style.display = 'inline-block';
+            applyFiltersBtn.disabled = true;
+            
+            currentPage = 1;
+            currentFilters = {
+                organization: organizationFilter.value,
+                sortField: sortField.value,
+                sortDirection: sortDirection.value
+            };
+            
+            try {
+                await loadTableData();
+            } finally {
+                applyLoader.style.display = 'none';
+                applyFiltersBtn.disabled = false;
+            }
+        }
+
+       
+        function resetFilters() {
+            organizationFilter.value = 'all';
+            sortField.value = '';
+            sortDirection.value = 'ASC';
+            applyFilters();
+        }
+
+        async function loadTableData(page = 1) {
+            if (!currentTable) return;
+            
+            currentPage = page;
+            setStatus(`Загрузка таблицы ${currentTable}...`, 'loading');
+            
+            try {
+                const response = await fetch(`/api/table/${currentTable}/filtered`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        page: currentPage,
+                        organizationFilter: currentFilters.organization,
+                        sortField: currentFilters.sortField,
+                        sortDirection: currentFilters.sortDirection
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.details || error.error || 'Ошибка сервера');
+                }
+                
+                const tableData = await response.json();
+                renderTable(tableData);
+                
+                setStatus(
+                    `Таблица: ${tableData.tableName} | Записей: ${tableData.total} | Страница ${tableData.page} из ${tableData.totalPages}`,
+                    'success'
+                );
+            } catch (err) {
+                setStatus(`Ошибка загрузки данных: ${err.message}`, 'error');
+                console.error('Ошибка загрузки таблицы:', err);
+                tableContainer.innerHTML = `
+                    <div class="error">
+                        <p><strong>Ошибка при загрузке таблицы ${currentTable}</strong></p>
+                        <p>${err.message}</p>
+                        <p>Проверьте:</p>
+                        <ul>
+                            <li>Существует ли таблица в базе данных</li>
+                            <li>Содержит ли таблица колонку "Производитель"</li>
+                            <li>Доступны ли данные для выбранных фильтров</li>
+                        </ul>
+                    </div>
+                `;
+                paginationEl.innerHTML = '';
+            }
+        }
+
+       
+        function renderTable(data) {
+            tableContainer.innerHTML = '';
+            paginationEl.innerHTML = '';
+            
+            const table = document.createElement('table');
+            
+            
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            
+            data.columns.forEach(column => {
+                const th = document.createElement('th');
+                th.textContent = column;
+                
+                if (column === currentFilters.sortField) {
+                    th.classList.add('active-sort');
+                    const icon = document.createElement('span');
+                    icon.className = 'sort-icon';
+                    icon.textContent = currentFilters.sortDirection === 'ASC' ? '↑' : '↓';
+                    th.appendChild(icon);
+                }
+                
+                headerRow.appendChild(th);
+            });
+            
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            
+            
+            const tbody = document.createElement('tbody');
+            
+            if (data.rows.length === 0) {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = data.columns.length;
+                cell.textContent = 'Нет данных, соответствующих выбранным фильтрам';
+                cell.style.textAlign = 'center';
+                cell.style.padding = '30px';
+                row.appendChild(cell);
+                tbody.appendChild(row);
+            } else {
+                data.rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    
+                    data.columns.forEach(column => {
+                        const td = document.createElement('td');
+                        td.textContent = row[column] !== null ? row[column] : 'NULL';
+                        tr.appendChild(td);
+                    });
+                    
+                    tbody.appendChild(tr);
+                });
+            }
+            
+            table.appendChild(tbody);
+            tableContainer.appendChild(table);
+            
+            
+            if (data.totalPages > 1) {
+                renderPagination(data);
+            }
+        }
+
+       
+        function renderPagination(data) {
+            paginationEl.innerHTML = '';
+            
+        
+            if (data.page > 1) {
+                const prevBtn = document.createElement('button');
+                prevBtn.innerHTML = '&larr; Назад';
+                prevBtn.addEventListener('click', () => loadTableData(data.page - 1));
+                paginationEl.appendChild(prevBtn);
+            }
+            
+         
+            const pageInfo = document.createElement('span');
+            pageInfo.textContent = `Страница ${data.page} из ${data.totalPages}`;
+            pageInfo.style.margin = '0 15px';
+            pageInfo.style.display = 'flex';
+            pageInfo.style.alignItems = 'center';
+            paginationEl.appendChild(pageInfo);
+            
+           
+            if (data.page < data.totalPages) {
+                const nextBtn = document.createElement('button');
+                nextBtn.innerHTML = 'Вперед &rarr;';
+                nextBtn.addEventListener('click', () => loadTableData(data.page + 1));
+                paginationEl.appendChild(nextBtn);
+            }
+        }
+
+   
+        function setStatus(message, type = '') {
+            statusEl.textContent = message;
+            statusEl.className = 'status';
+            if (type) {
+                statusEl.classList.add(type);
+            }
+        }
+    </script>
+</body>
+</html>

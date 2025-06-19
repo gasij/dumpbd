@@ -1,0 +1,2 @@
+запуск
+ node server.js
